@@ -1,0 +1,319 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Interview Chatbot</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for Inter font and rounded corners */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        .chat-container {
+            border-radius: 1rem; /* Rounded corners for the main container */
+        }
+        .message-bubble {
+            border-radius: 0.75rem; /* Rounded corners for chat bubbles */
+        }
+        .btn {
+            border-radius: 0.5rem; /* Rounded corners for buttons */
+        }
+    </style>
+</head>
+<body class="flex items-center justify-center min-h-screen p-4">
+    <div class="chat-container bg-white shadow-lg p-6 w-full max-w-2xl flex flex-col h-[80vh]">
+        <h1 class="text-3xl font-bold text-center text-gray-800 mb-6">AI Interview Practice</h1>
+
+        <!-- Interview Type Selection -->
+        <div class="mb-4 flex flex-col sm:flex-row items-center justify-center space-y-2 sm:space-y-0 sm:space-x-4">
+            <label for="jobRole" class="text-gray-700 font-medium">Job Role:</label>
+            <input type="text" id="jobRole" value="Software Engineer" class="p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 flex-grow sm:flex-grow-0" placeholder="e.g., Software Engineer">
+
+            <label for="interviewType" class="text-gray-700 font-medium">Interview Type:</label>
+            <select id="interviewType" class="p-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="behavioral">Behavioral</option>
+                <option value="technical">Technical</option>
+                <option value="situational">Situational</option>
+            </select>
+        </div>
+
+        <!-- Chat Display Area -->
+        <div id="chatDisplay" class="flex-grow bg-gray-100 p-4 overflow-y-auto mb-4 rounded-lg shadow-inner">
+            <!-- Chat messages will be appended here -->
+            <div class="message-bubble bg-blue-500 text-white p-3 mb-2 max-w-[80%] self-start">
+                Welcome! Select a job role and interview type, then click "Start Interview" to begin.
+            </div>
+        </div>
+
+        <!-- User Input and Controls -->
+        <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+            <button id="startInterviewBtn" class="btn bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 shadow-md transition duration-300 ease-in-out">
+                Start Interview
+            </button>
+            <input type="text" id="userInput" class="flex-grow p-3 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type your answer here..." disabled>
+            <button id="sendBtn" class="btn bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 shadow-md transition duration-300 ease-in-out" disabled>
+                Send
+            </button>
+        </div>
+
+        <!-- Loading Indicator -->
+        <div id="loadingIndicator" class="hidden text-center mt-4 text-blue-600 font-semibold">
+            Thinking...
+        </div>
+
+        <!-- Custom Message Box -->
+        <div id="messageBox" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4">
+            <div class="bg-white p-6 rounded-lg shadow-xl max-w-sm w-full text-center">
+                <p id="messageBoxText" class="text-lg mb-4"></p>
+                <button id="messageBoxCloseBtn" class="btn bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global variables for Firebase config and app ID (provided by the Canvas environment)
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        // UI Elements
+        const chatDisplay = document.getElementById('chatDisplay');
+        const userInput = document.getElementById('userInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const startInterviewBtn = document.getElementById('startInterviewBtn');
+        const jobRoleInput = document.getElementById('jobRole');
+        const interviewTypeSelect = document.getElementById('interviewType');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const messageBox = document.getElementById('messageBox');
+        const messageBoxText = document.getElementById('messageBoxText');
+        const messageBoxCloseBtn = document.getElementById('messageBoxCloseBtn');
+
+        let currentQuestion = ''; // Stores the last question asked by the bot
+        let chatHistory = []; // Stores the conversation history for the LLM
+
+        // --- Helper Functions ---
+
+        /**
+         * Displays a message in the custom message box.
+         * @param {string} message - The message to display.
+         */
+        function showMessageBox(message) {
+            messageBoxText.textContent = message;
+            messageBox.classList.remove('hidden');
+        }
+
+        /**
+         * Hides the custom message box.
+         */
+        function hideMessageBox() {
+            messageBox.classList.add('hidden');
+        }
+
+        messageBoxCloseBtn.addEventListener('click', hideMessageBox);
+
+        /**
+         * Appends a message to the chat display.
+         * @param {string} text - The text content of the message.
+         * @param {string} sender - 'user' or 'bot'.
+         */
+        function appendMessage(text, sender) {
+            const messageElement = document.createElement('div');
+            messageElement.classList.add('message-bubble', 'p-3', 'mb-2', 'max-w-[80%]', 'rounded-lg');
+
+            if (sender === 'user') {
+                messageElement.classList.add('bg-blue-500', 'text-white', 'self-end', 'ml-auto');
+            } else {
+                messageElement.classList.add('bg-gray-200', 'text-gray-800', 'self-start', 'mr-auto');
+            }
+
+            messageElement.textContent = text;
+            chatDisplay.appendChild(messageElement);
+            chatDisplay.scrollTop = chatDisplay.scrollHeight; // Scroll to bottom
+        }
+
+        /**
+         * Toggles the loading indicator visibility.
+         * @param {boolean} show - True to show, false to hide.
+         */
+        function toggleLoading(show) {
+            if (show) {
+                loadingIndicator.classList.remove('hidden');
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+                startInterviewBtn.disabled = true;
+            } else {
+                loadingIndicator.classList.add('hidden');
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                startInterviewBtn.disabled = false;
+            }
+        }
+
+        // --- Gemini API Interaction Functions ---
+
+        /**
+         * Calls the Gemini API to generate an interview question.
+         * @param {string} role - The job role.
+         * @param {string} type - The interview type (behavioral, technical, situational).
+         * @returns {Promise<string>} - The generated question.
+         */
+        async function getInterviewQuestion(role, type) {
+            const prompt = `Act as an interviewer for a ${role} role. Ask me a common ${type} interview question. Ensure the question is clear and concise.`;
+            chatHistory.push({ role: "user", parts: [{ text: prompt }] });
+
+            const payload = { contents: chatHistory };
+            const apiKey = ""; // Canvas will automatically provide this at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            try {
+                toggleLoading(true);
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const question = result.candidates[0].content.parts[0].text;
+                    chatHistory.push({ role: "model", parts: [{ text: question }] }); // Add bot's response to history
+                    return question;
+                } else {
+                    console.error("Gemini API response structure unexpected:", result);
+                    showMessageBox("Failed to get a question. Please try again.");
+                    return "Error: Could not generate question.";
+                }
+            } catch (error) {
+                console.error("Error calling Gemini API for question:", error);
+                showMessageBox("An error occurred while generating the question. Please check your network connection.");
+                return "Error: Network or API issue.";
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        /**
+         * Calls the Gemini API to evaluate a user's answer and provide feedback.
+         * @param {string} question - The question that was asked.
+         * @param {string} userAnswer - The user's response.
+         * @returns {Promise<string>} - The generated feedback.
+         */
+        async function getFeedback(question, userAnswer) {
+            const feedbackPrompt = `I asked the user: '${question}'. The user responded: '${userAnswer}'. As an experienced interviewer, evaluate this response for clarity, relevance, completeness, and application of the STAR method (if applicable for behavioral questions). Provide constructive feedback focusing on areas for improvement. Keep it concise, professional, and actionable.`;
+            chatHistory.push({ role: "user", parts: [{ text: feedbackPrompt }] }); // Add feedback prompt to history
+
+            const payload = { contents: chatHistory };
+            const apiKey = ""; // Canvas will automatically provide this at runtime
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+
+            try {
+                toggleLoading(true);
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+                const result = await response.json();
+
+                if (result.candidates && result.candidates.length > 0 &&
+                    result.candidates[0].content && result.candidates[0].content.parts &&
+                    result.candidates[0].content.parts.length > 0) {
+                    const feedback = result.candidates[0].content.parts[0].text;
+                    chatHistory.push({ role: "model", parts: [{ text: feedback }] }); // Add bot's feedback to history
+                    return feedback;
+                } else {
+                    console.error("Gemini API response structure unexpected for feedback:", result);
+                    showMessageBox("Failed to get feedback. Please try again.");
+                    return "Error: Could not generate feedback.";
+                }
+            } catch (error) {
+                console.error("Error calling Gemini API for feedback:", error);
+                showMessageBox("An error occurred while generating feedback. Please check your network connection.");
+                return "Error: Network or API issue.";
+            } finally {
+                toggleLoading(false);
+            }
+        }
+
+        // --- Event Handlers ---
+
+        /**
+         * Handles the start interview button click.
+         */
+        startInterviewBtn.addEventListener('click', async () => {
+            chatHistory = []; // Reset chat history for a new session
+            chatDisplay.innerHTML = ''; // Clear previous messages
+            appendMessage("Welcome! Let's start the interview.", 'bot');
+
+            const role = jobRoleInput.value.trim();
+            const type = interviewTypeSelect.value;
+
+            if (!role) {
+                showMessageBox("Please enter a job role to start the interview.");
+                return;
+            }
+
+            const question = await getInterviewQuestion(role, type);
+            if (question && !question.startsWith("Error:")) {
+                currentQuestion = question;
+                appendMessage(question, 'bot');
+                userInput.disabled = false;
+                sendBtn.disabled = false;
+                userInput.focus();
+            } else {
+                // Error message already shown by getInterviewQuestion
+            }
+        });
+
+        /**
+         * Handles sending user messages.
+         */
+        sendBtn.addEventListener('click', async () => {
+            const userText = userInput.value.trim();
+            if (userText === '') {
+                showMessageBox("Please type your answer before sending.");
+                return;
+            }
+
+            appendMessage(userText, 'user');
+            userInput.value = ''; // Clear input field
+
+            // 1. Get feedback for the current answer
+            const feedback = await getFeedback(currentQuestion, userText);
+            if (feedback && !feedback.startsWith("Error:")) {
+                appendMessage("Feedback: " + feedback, 'bot');
+            } else {
+                // Error message already shown by getFeedback
+            }
+
+            // 2. Ask the next question (or indicate end of session)
+            const role = jobRoleInput.value.trim();
+            const type = interviewTypeSelect.value;
+
+            // For simplicity, we'll just ask another question of the same type.
+            // In a real app, you'd have more sophisticated session management.
+            const nextQuestion = await getInterviewQuestion(role, type);
+            if (nextQuestion && !nextQuestion.startsWith("Error:")) {
+                currentQuestion = nextQuestion;
+                appendMessage(nextQuestion, 'bot');
+            } else {
+                appendMessage("Interview session ended. You can click 'Start Interview' for a new session.", 'bot');
+                userInput.disabled = true;
+                sendBtn.disabled = true;
+            }
+        });
+
+        // Allow sending with Enter key
+        userInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !sendBtn.disabled) {
+                sendBtn.click();
+            }
+        });
+    </script>
+</body>
+</html>
